@@ -28,11 +28,13 @@ import (
 	consumermock "github.com/uber/submitqueue/platform/consumer/mock"
 	extqueue "github.com/uber/submitqueue/platform/extension/messagequeue"
 	queuemock "github.com/uber/submitqueue/platform/extension/messagequeue/mock"
+	serverconfig "github.com/uber/submitqueue/service/stovepipe/server/config"
 	"github.com/uber/submitqueue/stovepipe/controller/dlq"
 	stovepipemq "github.com/uber/submitqueue/stovepipe/core/messagequeue"
 	"github.com/uber/submitqueue/stovepipe/core/requestlog"
 	"github.com/uber/submitqueue/stovepipe/entity"
 	buildissuenoop "github.com/uber/submitqueue/stovepipe/extension/buildissue/noop"
+	"github.com/uber/submitqueue/stovepipe/extension/queueconfig"
 	"github.com/uber/submitqueue/stovepipe/extension/storage"
 	storagemock "github.com/uber/submitqueue/stovepipe/extension/storage/mock"
 	"go.uber.org/mock/gomock"
@@ -53,10 +55,24 @@ func (c *recordingConsumer) Start(context.Context) error { return nil }
 
 func (c *recordingConsumer) Stop(int64) error { return nil }
 
+func testQueueConfigs(t *testing.T) queueconfig.Store {
+	t.Helper()
+
+	configs, err := serverconfig.Load("", nil)
+	require.NoError(t, err)
+
+	return configs
+}
+
 // registeredControllers runs the host's registration exactly as run() does and
 // returns the registry it registers against, the primary controllers, and the
 // DLQ controllers.
 func registeredControllers(t *testing.T) (consumer.TopicRegistry, []consumer.Controller, []consumer.Controller) {
+	t.Helper()
+	return registeredControllersWithConfig(t, testQueueConfigs(t))
+}
+
+func registeredControllersWithConfig(t *testing.T, configs queueconfig.Store) (consumer.TopicRegistry, []consumer.Controller, []consumer.Controller) {
 	t.Helper()
 
 	registry, err := newTopicRegistry(nil, "subscriber")
@@ -67,8 +83,20 @@ func registeredControllers(t *testing.T) (consumer.TopicRegistry, []consumer.Con
 	primary := &recordingConsumer{}
 	deadLetter := &recordingConsumer{}
 
-	_, err = registerPrimaryControllers(primary, logger, tally.NoopScope, store, requestlog.NewMaterializer(tally.NoopScope), registry,
-		fakeSourceControlFactory{}, fakeBuildRunnerFactory{}, hookResolver{}, buildissuenoop.New(), noopRepairExecutorFactory{})
+	_, err = registerPrimaryControllers(
+		primary,
+		logger,
+		tally.NoopScope,
+		store,
+		requestlog.NewMaterializer(tally.NoopScope),
+		configs,
+		registry,
+		fakeSourceControlFactory{},
+		fakeBuildRunnerFactory{},
+		hookResolver{},
+		buildissuenoop.New(),
+		noopRepairExecutorFactory{},
+	)
 	require.NoError(t, err)
 
 	_, err = registerDLQControllers(deadLetter, logger, tally.NoopScope, store, requestlog.NewMaterializer(tally.NoopScope), registry, noopRepairExecutorFactory{})
@@ -214,9 +242,20 @@ func TestRegisteredFixControllerRetainsPerExecutorDisposition(t *testing.T) {
 	registry, err := newTopicRegistry(queue, "subscriber")
 	require.NoError(t, err)
 	primary := &recordingConsumer{}
-	_, err = registerPrimaryControllers(primary, zaptest.NewLogger(t).Sugar(), tally.NoopScope, stores,
-		requestlog.NewMaterializer(tally.NoopScope), registry, fakeSourceControlFactory{}, fakeBuildRunnerFactory{},
-		hookResolver{}, buildissuenoop.New(), noopRepairExecutorFactory{})
+	_, err = registerPrimaryControllers(
+		primary,
+		zaptest.NewLogger(t).Sugar(),
+		tally.NoopScope,
+		stores,
+		requestlog.NewMaterializer(tally.NoopScope),
+		testQueueConfigs(t),
+		registry,
+		fakeSourceControlFactory{},
+		fakeBuildRunnerFactory{},
+		hookResolver{},
+		buildissuenoop.New(),
+		noopRepairExecutorFactory{},
+	)
 	require.NoError(t, err)
 	var fixController consumer.Controller
 	for _, controller := range primary.controllers {
@@ -278,13 +317,43 @@ func TestPipelineSubscriptionRetryPolicies(t *testing.T) {
 		consumerGroup string
 		wantRetry     extqueue.RetryConfig
 	}{
-		{name: "process", topicKey: stovepipemq.TopicKeyProcess, consumerGroup: "stovepipe-process", wantRetry: defaultRetry},
-		{name: "build", topicKey: stovepipemq.TopicKeyBuild, consumerGroup: "stovepipe-build", wantRetry: defaultRetry},
-		{name: "buildsignal", topicKey: stovepipemq.TopicKeyBuildSignal, consumerGroup: "stovepipe-buildsignal", wantRetry: extendedRetry},
-		{name: "buildanalysis", topicKey: stovepipemq.TopicKeyBuildAnalysis, consumerGroup: "stovepipe-buildanalysis", wantRetry: extendedRetry},
-		{name: "issuetrack", topicKey: stovepipemq.TopicKeyIssueTrack, consumerGroup: "stovepipe-issuetrack", wantRetry: extendedRetry},
+		{
+			name:          "process",
+			topicKey:      stovepipemq.TopicKeyProcess,
+			consumerGroup: "stovepipe-process",
+			wantRetry:     defaultRetry,
+		},
+		{
+			name:          "build",
+			topicKey:      stovepipemq.TopicKeyBuild,
+			consumerGroup: "stovepipe-build",
+			wantRetry:     defaultRetry,
+		},
+		{
+			name:          "buildsignal",
+			topicKey:      stovepipemq.TopicKeyBuildSignal,
+			consumerGroup: "stovepipe-buildsignal",
+			wantRetry:     extendedRetry,
+		},
+		{
+			name:          "buildanalysis",
+			topicKey:      stovepipemq.TopicKeyBuildAnalysis,
+			consumerGroup: "stovepipe-buildanalysis",
+			wantRetry:     extendedRetry,
+		},
+		{
+			name:          "issuetrack",
+			topicKey:      stovepipemq.TopicKeyIssueTrack,
+			consumerGroup: "stovepipe-issuetrack",
+			wantRetry:     extendedRetry,
+		},
 		{name: "fix", topicKey: stovepipemq.TopicKeyFix, consumerGroup: "stovepipe-fix", wantRetry: extendedRetry},
-		{name: "record", topicKey: stovepipemq.TopicKeyRecord, consumerGroup: "stovepipe-record", wantRetry: extendedRetry},
+		{
+			name:          "record",
+			topicKey:      stovepipemq.TopicKeyRecord,
+			consumerGroup: "stovepipe-record",
+			wantRetry:     extendedRetry,
+		},
 		{name: "hook", topicKey: basehook.TopicKeyHook, consumerGroup: "stovepipe-hook", wantRetry: defaultRetry},
 	}
 

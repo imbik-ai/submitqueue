@@ -1,0 +1,34 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "go_default_library",
+    srcs = [
+        "build_analysis.go",
+        "build_signal.go",
+        "config.go",
+        "duration.go",
+        "issue_track.go",
+        "process.go",
+        "stages.go",
+    ],
+    embedsrcs = ["base.yaml"],
+    importpath = "github.com/uber/submitqueue/service/stovepipe/server/config",
+    visibility = ["//service/stovepipe/server:__pkg__"],
+    deps = [
+        "//stovepipe/entity:go_default_library",
+        "//stovepipe/extension/queueconfig:go_default_library",
+        "//stovepipe/extension/queueconfig/static:go_default_library",
+        "@in_gopkg_yaml_v3//:go_default_library",
+    ],
+)
+
+go_test(
+    name = "go_default_test",
+    srcs = ["config_test.go"],
+    embed = [":go_default_library"],
+    deps = [
+        "//stovepipe/extension/queueconfig:go_default_library",
+        "@com_github_stretchr_testify//assert:go_default_library",
+        "@com_github_stretchr_testify//require:go_default_library",
+    ],
+)

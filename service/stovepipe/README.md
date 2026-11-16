@@ -53,6 +53,10 @@ The Stovepipe controllers live under [`stovepipe/controller/`](../../stovepipe/c
 | `PORT`              | no       | gRPC listen address                      | `:8083`              |
 | `HOSTNAME`          | no       | Subscriber name for the queue consumers  | `stovepipe-<unix_ts>` |
 
+## Queue and stage configuration
+
+The server accepts an optional `-config` YAML file for deployment-wide queue and stage settings and per-queue overrides. See the [configuration guide](server/README.md) for settings, validation. The service always loads its embedded baseline; the optional file overrides it.
+
 ## Running
 
 ### Docker Compose (recommended)

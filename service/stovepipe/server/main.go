@@ -18,6 +18,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"flag"
 	"fmt"
 	"net"
 	"os"
@@ -45,6 +46,7 @@ import (
 	queueMySQL "github.com/uber/submitqueue/platform/extension/messagequeue/mysql"
 	platformhook "github.com/uber/submitqueue/platform/hook"
 	servicemq "github.com/uber/submitqueue/service/messagequeue"
+	serverconfig "github.com/uber/submitqueue/service/stovepipe/server/config"
 	"github.com/uber/submitqueue/service/stovepipe/server/handler"
 	"github.com/uber/submitqueue/stovepipe/controller"
 	"github.com/uber/submitqueue/stovepipe/controller/build"
@@ -66,7 +68,7 @@ import (
 	fixernoop "github.com/uber/submitqueue/stovepipe/extension/fixer/noop"
 	projectissuesnoop "github.com/uber/submitqueue/stovepipe/extension/projectissues/noop"
 	projectstatusnoop "github.com/uber/submitqueue/stovepipe/extension/projectstatus/noop"
-	queueconfigdefault "github.com/uber/submitqueue/stovepipe/extension/queueconfig/default"
+	"github.com/uber/submitqueue/stovepipe/extension/queueconfig"
 	"github.com/uber/submitqueue/stovepipe/extension/sourcecontrol"
 	sourcecontrolfake "github.com/uber/submitqueue/stovepipe/extension/sourcecontrol/fake"
 	"github.com/uber/submitqueue/stovepipe/extension/storage"
@@ -114,8 +116,10 @@ func (hookResolver) For(*basehook.HookEvent) []hookext.Hook {
 }
 
 func main() {
+	configPath := flag.String("config", "", "path to the Stovepipe YAML configuration")
+	flag.Parse()
 	code := 0
-	if err := run(); err != nil {
+	if err := run(*configPath); err != nil {
 		if errors.Is(err, context.Canceled) {
 			fmt.Println("Stovepipe server stopped by signal")
 
@@ -131,7 +135,7 @@ func main() {
 	os.Exit(code)
 }
 
-func run() error {
+func run(configPath string) error {
 	// Set up signal handling early so retry loops can respond to SIGTERM
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
@@ -142,6 +146,23 @@ func run() error {
 		return fmt.Errorf("failed to create logger: %w", err)
 	}
 	defer logger.Sync()
+
+	tenants, err := servicemq.ParseRequiredTenants(os.Getenv("MQ_TENANTS"))
+	if err != nil {
+		return fmt.Errorf("failed to configure queue subscribers: %w", err)
+	}
+
+	configs, err := serverconfig.Load(configPath, tenants)
+	if err != nil {
+		return fmt.Errorf("load queue configurations: %w", err)
+	}
+
+	resolved, err := configs.List(ctx)
+	if err != nil {
+		return fmt.Errorf("list queue configurations: %w", err)
+	}
+
+	logger.Info("queue configurations loaded", zap.Any("queues", resolved))
 
 	// Initialize metrics scope
 	scope := tally.NewTestScope("stovepipe", nil)
@@ -205,11 +226,6 @@ func run() error {
 		return fmt.Errorf("failed to configure queue database pool: %w", err)
 	}
 
-	tenants, err := servicemq.ParseRequiredTenants(os.Getenv("MQ_TENANTS"))
-	if err != nil {
-		return fmt.Errorf("failed to configure queue subscribers: %w", err)
-	}
-
 	mysqlQueue, err := queueMySQL.NewQueue(queueMySQL.Params{
 		DB:           queueDB,
 		Logger:       logger,
@@ -263,7 +279,20 @@ func run() error {
 
 	storageFty := storageFactory{backend: store}
 	materializer := requestlog.NewMaterializer(scope)
-	primaryCount, err := registerPrimaryControllers(primaryConsumer, logger.Sugar(), scope, storageFty, materializer, registry, sourceControl, brf, hookResolver{}, detectorFactory, repairExecutors)
+	primaryCount, err := registerPrimaryControllers(
+		primaryConsumer,
+		logger.Sugar(),
+		scope,
+		storageFty,
+		materializer,
+		configs,
+		registry,
+		sourceControl,
+		brf,
+		hookResolver{},
+		detectorFactory,
+		repairExecutors,
+	)
 	if err != nil {
 		return err
 	}
@@ -385,6 +414,7 @@ func registerPrimaryControllers(
 	scope tally.Scope,
 	store storage.Factory,
 	materializer requestlog.Materializer,
+	configs queueconfig.Store,
 	registry consumer.TopicRegistry,
 	sourceControl sourcecontrol.Factory,
 	brf buildrunner.Factory,
@@ -399,7 +429,7 @@ func registerPrimaryControllers(
 		scope,
 		store,
 		materializer,
-		queueconfigdefault.NewStore(),
+		configs,
 		sourceControl,
 		registry,
 		stovepipemq.TopicKeyProcess,
@@ -410,43 +440,106 @@ func registerPrimaryControllers(
 	}
 	count++
 
-	buildController := build.NewController(logger, scope, store, materializer, brf, registry, stovepipemq.TopicKeyBuild, "stovepipe-build")
+	buildController := build.NewController(
+		logger,
+		scope,
+		store,
+		materializer,
+		brf,
+		registry,
+		stovepipemq.TopicKeyBuild,
+		"stovepipe-build",
+	)
 	if err := c.Register(buildController); err != nil {
 		return count, fmt.Errorf("failed to register build controller: %w", err)
 	}
 	count++
 
-	buildSignalController := buildsignal.NewController(logger, scope, store, materializer, brf, registry, stovepipemq.TopicKeyBuildSignal, "stovepipe-buildsignal")
+	buildSignalController := buildsignal.NewController(
+		logger,
+		scope,
+		store,
+		materializer,
+		brf,
+		registry,
+		stovepipemq.TopicKeyBuildSignal,
+		"stovepipe-buildsignal",
+	)
 	if err := c.Register(buildSignalController); err != nil {
 		return count, fmt.Errorf("failed to register buildsignal controller: %w", err)
 	}
 	count++
 
-	analysisController := buildanalysis.NewController(logger, scope, store, materializer, detectorFactory, registry, stovepipemq.TopicKeyBuildAnalysis, "stovepipe-buildanalysis")
+	analysisController := buildanalysis.NewController(
+		logger,
+		scope,
+		store,
+		materializer,
+		detectorFactory,
+		registry,
+		stovepipemq.TopicKeyBuildAnalysis,
+		"stovepipe-buildanalysis",
+	)
 	if err := c.Register(analysisController); err != nil {
 		return count, fmt.Errorf("failed to register buildanalysis controller: %w", err)
 	}
 	count++
 
-	issueTrackController := issuetrack.NewController(logger, scope, store, materializer, registry, stovepipemq.TopicKeyIssueTrack, "stovepipe-issuetrack")
+	issueTrackController := issuetrack.NewController(
+		logger,
+		scope,
+		store,
+		materializer,
+		registry,
+		stovepipemq.TopicKeyIssueTrack,
+		"stovepipe-issuetrack",
+	)
 	if err := c.Register(issueTrackController); err != nil {
 		return count, fmt.Errorf("failed to register issuetrack controller: %w", err)
 	}
 	count++
 
-	fixController := fix.NewController(logger, scope, store, materializer, repairExecutors, registry, stovepipemq.TopicKeyFix, "stovepipe-fix")
+	fixController := fix.NewController(
+		logger,
+		scope,
+		store,
+		materializer,
+		repairExecutors,
+		registry,
+		stovepipemq.TopicKeyFix,
+		"stovepipe-fix",
+	)
 	if err := c.Register(fixController); err != nil {
 		return count, fmt.Errorf("failed to register fix controller: %w", err)
 	}
 	count++
 
-	projectController := projectanalysis.NewController(logger, scope, store, materializer, projectstatusnoop.New(), projectissuesnoop.New(), registry, stovepipemq.TopicKeyProjectAnalysis, "stovepipe-projectanalysis")
+	projectController := projectanalysis.NewController(
+		logger,
+		scope,
+		store,
+		materializer,
+		projectstatusnoop.New(),
+		projectissuesnoop.New(),
+		registry,
+		stovepipemq.TopicKeyProjectAnalysis,
+		"stovepipe-projectanalysis",
+	)
 	if err := c.Register(projectController); err != nil {
 		return count, fmt.Errorf("failed to register projectanalysis controller: %w", err)
 	}
 	count++
 
-	recordController := record.NewController(logger, scope, store, materializer, sourceControl, registry, stovepipemq.TopicKeyRecord, "stovepipe-record")
+	recordController := record.NewController(
+		logger,
+		scope,
+		store,
+		materializer,
+		sourceControl,
+		registry,
+		stovepipemq.TopicKeyRecord,
+		"stovepipe-record",
+	)
 	if err := c.Register(recordController); err != nil {
 		return count, fmt.Errorf("failed to register record controller: %w", err)
 	}
