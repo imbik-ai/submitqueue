@@ -1,0 +1,8 @@
+services:
+  stovepipe-service:
+    command: ["./stovepipe", "-config", "/etc/stovepipe/config.yaml"]
+    volumes:
+      - type: bind
+        source: ${REPO_ROOT}/test/e2e/stovepipe/stovepipe.yaml
+        target: /etc/stovepipe/config.yaml
+        read_only: true

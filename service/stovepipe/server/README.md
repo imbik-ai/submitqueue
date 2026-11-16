@@ -15,3 +15,9 @@ Deployment-wide stage settings from the optional file override the service basel
 Every queue override must name a queue in `MQ_TENANTS`; queues without overrides inherit the deployment configuration. Queue registration is separate from stage settings. The static store only serves registered queues.
 
 The baseline retains a concurrency limit of one, a five-second admission wait, five-second accepted-build polling, two-second running-build polling, two-minute build analysis polling, and thirty-second issue refresh and recovery waits. These values are defined only in the baseline YAML.
+
+## End-to-end profile
+
+The Stovepipe e2e suite stages its own override file and selects it through a Compose overlay. All periodic stage waits and the admission wait become 250 milliseconds; unspecified settings, including concurrency, inherit the service baseline. Immediate batch continuation and consumer retry policies are unchanged. Ordinary local Compose runs do not select the e2e profile.
+
+Run the real-stack suite locally with `bazel test //test/e2e/stovepipe:go_default_test --nocache_test_results`. Bazel supplies the server binary, Compose overlay, and override file through declared inputs; the baseline is embedded in the binary. The runner timeout remains the existing safety ceiling rather than the normal runtime target.

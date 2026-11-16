@@ -55,7 +55,7 @@ The Stovepipe controllers live under [`stovepipe/controller/`](../../stovepipe/c
 
 ## Queue and stage configuration
 
-The server accepts an optional `-config` YAML file for deployment-wide queue and stage settings and per-queue overrides. See the [configuration guide](server/README.md) for settings, validation. The service always loads its embedded baseline; the optional file overrides it.
+The server accepts an optional `-config` YAML file for deployment-wide queue and stage settings and per-queue overrides. See the [configuration guide](server/README.md) for settings, validation, and the isolated end-to-end profile. The service always loads its embedded baseline; the optional file overrides it.
 
 ## Running
 

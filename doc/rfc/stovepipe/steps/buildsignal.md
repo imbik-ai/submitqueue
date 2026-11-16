@@ -118,7 +118,7 @@ Two-tier cadence, matching SubmitQueue:
 | `accepted` | `BuildSignal.AcceptedPollDelayMs` (default 5000ms) | Queued by the runner, not started — poll infrequently. |
 | `running` | `BuildSignal.RunningPollDelayMs` (default 2000ms) | Actively executing — poll more often. |
 
-Each delivery resolves these settings through the queue configuration store. Hosts apply a service baseline, deployment-wide settings, and per-queue overrides before supplying immutable configurations. The reference server embeds its baseline YAML and layers an optional configuration file over it. See the [configuration guide](../../../../service/stovepipe/server/README.md).
+Each delivery resolves these settings through the queue configuration store. Hosts apply a service baseline, deployment-wide settings, and per-queue overrides before supplying immutable configurations. The reference server embeds its baseline YAML and layers an optional configuration file over it; the e2e profile selects shorter positive waits without changing consumer retry behavior. See the [configuration guide](../../../../service/stovepipe/server/README.md).
 
 ## Error classification
 
