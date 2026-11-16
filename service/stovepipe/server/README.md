@@ -15,5 +15,3 @@ Deployment-wide stage settings from the optional file override the service basel
 Every queue override must name a queue in `MQ_TENANTS`; queues without overrides inherit the deployment configuration. Queue registration is separate from stage settings. The static store only serves registered queues.
 
 The baseline retains a concurrency limit of one, a five-second admission wait, five-second accepted-build polling, two-second running-build polling, two-minute build analysis polling, and thirty-second issue refresh and recovery waits. These values are defined only in the baseline YAML.
-
-Process-stage admission consumes this configuration. Other stage controllers retain their existing intervals.
